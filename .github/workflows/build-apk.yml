@@ -40,21 +40,19 @@ jobs:
             cp launcher-$d.png $RES/mipmap-$d/ic_launcher.png
           done
 
-      - name: APK build karo
-        run: flutter build apk --release --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
-
-      - name: APK sign karo
+      - name: APK build aur sign karo
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
         run: |
           if [ -z "$KEYSTORE_B64" ]; then echo "KEYSTORE_B64 secret nahi mila."; exit 1; fi
-          echo "$KEYSTORE_B64" | base64 -d > release.keystore
+          echo "$KEYSTORE_B64" | base64 -d > $RUNNER_TEMP/release.keystore
+          KS_PATH=$RUNNER_TEMP/release.keystore python3 ci/sign_patch.py
+          flutter build apk --release --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
+          cp build/app/outputs/flutter-apk/app-release.apk Darzi-Register.apk
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
-          $BT/apksigner sign --ks release.keystore --ks-pass env:KEYSTORE_PASS --key-pass env:KEYSTORE_PASS --ks-key-alias darzi \
-            --out Darzi-Register.apk build/app/outputs/flutter-apk/app-release.apk
-          $BT/apksigner verify Darzi-Register.apk
-          rm -f release.keystore
+          $BT/apksigner verify --print-certs Darzi-Register.apk | grep -i "SHA-1"
+          rm -f $RUNNER_TEMP/release.keystore
 
       - uses: actions/upload-artifact@v4
         with:

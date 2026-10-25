@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import 'customers.dart';
+import 'drive.dart';
 import 'models.dart';
 import 'orders.dart';
 import 'store.dart';
@@ -62,9 +65,29 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell> {
+class _ShellState extends State<Shell> with WidgetsBindingObserver {
   int tab = 0;
   String orderFilter = 'open';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Like WhatsApp: when the shop closes the app, send changes to Drive.
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      store.flushBackup();
+    }
+  }
 
   void openOrders(String filter) => setState(() {
         orderFilter = filter;
@@ -81,9 +104,9 @@ class _ShellState extends State<Shell> {
         }
         final pages = [
           HomeTab(onOpenOrders: openOrders),
-          const CustomersTab(),
+          CustomersTab(),
           OrdersTab(filter: orderFilter, onFilter: (f) => setState(() => orderFilter = f)),
-          const SettingsTab(),
+          SettingsTab(),
         ];
         return PopScope(
           canPop: tab == 0,
@@ -131,8 +154,20 @@ class HomeTab extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(right: 14),
             child: Center(
-              child: Text(store.lastBackup == 0 ? 'Backup nahi' : 'Backup: ${agoText(store.lastBackup)}',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(
+                  store.driveBusy
+                      ? Icons.cloud_sync
+                      : store.driveOn && store.driveError.isEmpty
+                          ? Icons.cloud_done
+                          : Icons.cloud_off,
+                  size: 16,
+                  color: Colors.white70,
+                ),
+                const SizedBox(width: 4),
+                Text(store.lastBackup == 0 ? 'Backup nahi' : agoText(store.lastBackup),
+                    style: const TextStyle(fontSize: 12, color: Colors.white70)),
+              ]),
             ),
           ),
         ],
@@ -190,9 +225,11 @@ class BackupBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (bg, fg) = statusColors(context, 'cutting');
-    final text = store.lastBackup == 0
-        ? 'Abhi tak Google Drive par backup nahi liya. Phone kho gaya to data bhi chala jayega.'
-        : 'Aakhri backup ${agoText(store.lastBackup)} pehle. ${store.changes} nayi tabdeeliyan abhi Drive par nahi hain.';
+    final text = store.driveOn
+        ? 'Drive backup ruka hua hai: ${store.driveError}'
+        : store.lastBackup == 0
+            ? 'Google Drive auto backup band hai. Phone kho gaya to data bhi chala jayega.'
+            : 'Aakhri backup ${agoText(store.lastBackup)} pehle. ${store.changes} nayi tabdeeliyan abhi Drive par nahi hain.';
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
@@ -201,12 +238,58 @@ class BackupBanner extends StatelessWidget {
         const SizedBox(height: 8),
         OutlinedButton.icon(
           style: OutlinedButton.styleFrom(foregroundColor: fg, side: BorderSide(color: fg)),
-          onPressed: () => doBackup(context),
+          onPressed: () => store.driveOn ? driveBackupNow(context) : connectDriveFlow(context),
           icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-          label: const Text('Abhi Drive par backup lein'),
+          label: Text(store.driveOn ? 'Dobara koshish karein' : 'Google Drive auto backup chalu karein'),
         ),
       ]),
     );
+  }
+}
+
+Future<void> driveBackupNow(BuildContext context) async {
+  try {
+    await store.backupToDrive();
+    if (context.mounted) toast(context, 'Drive par backup ho gaya');
+  } catch (e) {
+    if (context.mounted) toast(context, friendlyDriveError(e));
+  }
+}
+
+/// Sign in with Google; if a backup already exists on Drive, offer to restore it.
+Future<void> connectDriveFlow(BuildContext context) async {
+  try {
+    final remote = await store.connectDrive();
+    if (!context.mounted) return;
+    if (remote == null) {
+      toast(context, store.driveError.isEmpty ? 'Drive jud gaya. Ab backup khud hota rahega.' : store.driveError);
+      return;
+    }
+    int count = 0;
+    try {
+      final j = jsonDecode(remote.json);
+      if (j is Map && j['customers'] is List) count = (j['customers'] as List).length;
+    } catch (_) {}
+    final when = remote.modified == null ? '' : ' (${fmtMillis(remote.modified!.millisecondsSinceEpoch)})';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Drive par backup mila'),
+        content: Text('Is Google account mein $count customers ka backup hai$when.\n\nKya ye data is phone mein wapas laein? Phone ka mojooda data bhi saath rahega.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Abhi nahi')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Haan, restore karein')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final n = await store.restoreJson(remote.json);
+      if (context.mounted) toast(context, '$n customers Drive se wapas aa gaye');
+    } else if (store.customers.isNotEmpty) {
+      await store.backupToDrive(silent: true);
+    }
+  } catch (e) {
+    if (context.mounted) toast(context, friendlyDriveError(e));
   }
 }
 
@@ -283,30 +366,91 @@ class _SettingsTabState extends State<SettingsTab> {
               ]),
             ),
           ),
-          const SectionTitle('Google Drive backup'),
+          const SectionTitle('Google Drive auto backup'),
           Card(
             margin: EdgeInsets.zero,
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Row(children: [
-                  Icon(Icons.circle, size: 12, color: store.lastBackup == 0 ? cs.outline : statusColors(context, 'ready').$2),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      store.lastBackup == 0 ? 'Abhi tak backup nahi liya' : 'Aakhri backup: ${agoText(store.lastBackup)} pehle',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
+                  Icon(
+                    store.driveOn ? (store.driveError.isEmpty ? Icons.cloud_done : Icons.cloud_off) : Icons.cloud_outlined,
+                    color: store.driveOn && store.driveError.isEmpty ? statusColors(context, 'ready').$2 : cs.outline,
                   ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(store.driveOn ? 'Chalu hai' : 'Band hai', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                      if (store.driveOn) Text(store.driveEmail, style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
+                    ]),
+                  ),
+                  if (store.driveBusy) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
                 ]),
-                const SizedBox(height: 8),
-                Text('"Drive par backup" dabayein, phir list mein Drive chunein aur Save dabayein. Hafte mein ek dafa zaroor karein.',
+                const SizedBox(height: 10),
+                Text(
+                  store.driveOn
+                      ? 'Har tabdeeli ke 10 second baad, aur app band karte waqt, data khud Google Drive par chala jata hai. '
+                          'Aakhri backup: ${store.lastDrive == 0 ? 'abhi nahi hua' : '${agoText(store.lastDrive)} pehle'}.'
+                      : 'Google account se jorein. Phir WhatsApp ki tarah saara data khud Drive par save hota rahega, aur naye phone par wapas aa jayega.',
+                  style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
+                ),
+                if (store.driveError.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(store.driveError, style: TextStyle(fontSize: 13, color: statusColors(context, 'late').$2)),
+                ],
+                const SizedBox(height: 12),
+                if (!store.driveOn)
+                  FilledButton.icon(
+                    onPressed: () => connectDriveFlow(context),
+                    icon: const Icon(Icons.add_to_drive),
+                    label: const Text('Google Drive se jorein'),
+                  )
+                else ...[
+                  FilledButton.icon(
+                    onPressed: store.driveBusy ? null : () => driveBackupNow(context),
+                    icon: const Icon(Icons.cloud_upload_outlined),
+                    label: const Text('Abhi backup karein'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: store.driveBusy
+                        ? null
+                        : () async {
+                            try {
+                              final n = await store.restoreFromDrive();
+                              if (!context.mounted) return;
+                              toast(context, n == null ? 'Drive par koi backup nahi mila' : '$n customers Drive se wapas aa gaye');
+                            } catch (e) {
+                              if (context.mounted) toast(context, friendlyDriveError(e));
+                            }
+                          },
+                    icon: const Icon(Icons.cloud_download_outlined),
+                    label: const Text('Drive se restore karein'),
+                  ),
+                  TextButton(
+                    onPressed: () async {
+                      await store.disconnectDrive();
+                      if (context.mounted) toast(context, 'Drive alag kar diya');
+                    },
+                    child: const Text('Google account alag karein'),
+                  ),
+                ],
+              ]),
+            ),
+          ),
+          const SectionTitle('Backup file (extra)'),
+          Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Text('Backup ki file WhatsApp, email ya kisi aur jagah bhej sakte hain, ya file se data wapas la sakte hain.',
                     style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
                 const SizedBox(height: 12),
-                FilledButton.icon(
+                OutlinedButton.icon(
                   onPressed: () => doBackup(context),
-                  icon: const Icon(Icons.cloud_upload_outlined),
-                  label: const Text('Drive par backup'),
+                  icon: const Icon(Icons.share),
+                  label: const Text('Backup file share karein'),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
@@ -322,9 +466,6 @@ class _SettingsTabState extends State<SettingsTab> {
                   label: const Text('Backup file se wapas laein'),
                 ),
                 const SizedBox(height: 8),
-                Text('Naye phone par: app install karein, phir "Backup file se wapas laein" dabayein aur Drive se apni backup file chunein.',
-                    style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
-                const SizedBox(height: 6),
                 Text('${store.customers.length} customers · ${store.orders.length} orders · kul mila ${rs(received)}',
                     style: TextStyle(fontSize: 13, fontFamily: 'monospace', color: cs.onSurfaceVariant)),
               ]),

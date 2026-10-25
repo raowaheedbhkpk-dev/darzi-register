@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'drive.dart';
 import 'models.dart';
 
 /// All app data, saved as one JSON file inside the phone.
@@ -20,6 +22,15 @@ class Store extends ChangeNotifier {
   bool loaded = false;
   File? _file;
 
+  // Google Drive auto backup (like WhatsApp)
+  final DriveBackup drive = DriveBackup();
+  bool driveOn = false; // user turned it on
+  String driveEmail = '';
+  int lastDrive = 0; // last successful Drive upload
+  String driveError = '';
+  bool driveBusy = false;
+  Timer? _autoTimer;
+
   Future<void> load() async {
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -32,6 +43,9 @@ class Store extends ChangeNotifier {
           if (meta is Map) {
             lastBackup = (meta['lastBackup'] as num?)?.toInt() ?? 0;
             changes = (meta['changes'] as num?)?.toInt() ?? 0;
+            driveOn = meta['driveOn'] == true;
+            driveEmail = (meta['driveEmail'] ?? '').toString();
+            lastDrive = (meta['lastDrive'] as num?)?.toInt() ?? 0;
           }
         }
       }
@@ -40,6 +54,12 @@ class Store extends ChangeNotifier {
     }
     loaded = true;
     notifyListeners();
+    if (driveOn) {
+      // quietly reconnect, then send anything not yet on Drive
+      if (await drive.signInSilently()) {
+        if (changes > 0) scheduleAutoBackup(delay: const Duration(seconds: 3));
+      }
+    }
   }
 
   /// Returns number of customers in [j].
@@ -90,7 +110,14 @@ class Store extends ChangeNotifier {
         'shop': {'name': shopName, 'phone': shopPhone},
         'customers': customers.map((c) => c.toJson()).toList(),
         'orders': orders.map((o) => o.toJson()).toList(),
-        if (withMeta) 'meta': {'lastBackup': lastBackup, 'changes': changes},
+        if (withMeta)
+          'meta': {
+            'lastBackup': lastBackup,
+            'changes': changes,
+            'driveOn': driveOn,
+            'driveEmail': driveEmail,
+            'lastDrive': lastDrive,
+          },
       };
 
   Future<void> _save() async {
@@ -109,6 +136,97 @@ class Store extends ChangeNotifier {
     changes++;
     notifyListeners();
     await _save();
+    scheduleAutoBackup();
+  }
+
+  // ---------- Google Drive auto backup ----------
+  /// Waits a little so several quick edits go up as one backup.
+  void scheduleAutoBackup({Duration delay = const Duration(seconds: 10)}) {
+    if (!driveOn) return;
+    _autoTimer?.cancel();
+    _autoTimer = Timer(delay, () => backupToDrive(silent: true));
+  }
+
+  /// Called when the app goes to background: back up right away if needed.
+  Future<void> flushBackup() async {
+    if (!driveOn || changes == 0) return;
+    _autoTimer?.cancel();
+    await backupToDrive(silent: true);
+  }
+
+  Future<bool> backupToDrive({bool silent = false}) async {
+    if (driveBusy) return false;
+    // Never overwrite a Drive backup with an empty phone (new phone before restore).
+    if (customers.isEmpty && orders.isEmpty) return false;
+    driveBusy = true;
+    notifyListeners();
+    try {
+      await drive.upload(jsonEncode(_toJson()));
+      lastDrive = DateTime.now().millisecondsSinceEpoch;
+      lastBackup = lastDrive;
+      changes = 0;
+      driveError = '';
+      return true;
+    } catch (e) {
+      driveError = friendlyDriveError(e);
+      if (!silent) rethrow;
+      return false;
+    } finally {
+      driveBusy = false;
+      notifyListeners();
+      await _save();
+    }
+  }
+
+  /// Connects a Google account. Returns the backup found on Drive (if any)
+  /// so the screen can offer to restore it.
+  Future<RemoteBackup?> connectDrive() async {
+    final email = await drive.signIn();
+    if (email == null) throw Exception('sign_in_canceled');
+    driveOn = true;
+    driveEmail = email;
+    driveError = '';
+    await _save();
+    notifyListeners();
+    RemoteBackup? remote;
+    try {
+      remote = await drive.download();
+    } catch (e) {
+      driveError = friendlyDriveError(e);
+    }
+    if (remote == null && (customers.isNotEmpty || orders.isNotEmpty)) {
+      await backupToDrive(silent: true);
+    }
+    return remote;
+  }
+
+  Future<void> disconnectDrive() async {
+    _autoTimer?.cancel();
+    await drive.signOut();
+    driveOn = false;
+    driveEmail = '';
+    await _save();
+    notifyListeners();
+  }
+
+  /// Merges a backup's JSON into the phone. Returns number of customers in it.
+  Future<int> restoreJson(String json) async {
+    final j = jsonDecode(json);
+    if (j is! Map<String, dynamic> || j['customers'] is! List) {
+      throw const FormatException('bad');
+    }
+    final n = _apply(j, merge: true);
+    changes++;
+    notifyListeners();
+    await _save();
+    scheduleAutoBackup(); // send the merged data back up
+    return n;
+  }
+
+  Future<int?> restoreFromDrive() async {
+    final r = await drive.download();
+    if (r == null) return null;
+    return restoreJson(r.json);
   }
 
   // ---------- customers ----------
@@ -181,6 +299,7 @@ class Store extends ChangeNotifier {
   // ---------- backup ----------
   bool get needsBackup {
     if (customers.isEmpty) return false;
+    if (driveOn) return driveError.isNotEmpty && changes > 0;
     if (lastBackup == 0) return true;
     final old = DateTime.now().millisecondsSinceEpoch - lastBackup > 3 * 86400000;
     return changes > 0 && (old || changes >= 15);
