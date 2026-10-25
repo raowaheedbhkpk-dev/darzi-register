@@ -1,4 +1,12 @@
-darzi-release.keystore
 *.keystore
 build/
-node_modules/
+.dart_tool/
+android/
+ios/
+web/
+linux/
+macos/
+windows/
+.flutter-plugins*
+.metadata
+pubspec.lock
