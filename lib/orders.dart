@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'customers.dart';
 import 'models.dart';
 import 'store.dart';
+import 'theme.dart';
 import 'widgets.dart';
 
 // ======================= ORDERS LIST =======================
 const _filters = [
-  ('open', 'Khule'),
-  ('today', 'Aaj'),
+  ('open', 'Open'),
+  ('today', 'Today'),
   ('late', 'Late'),
-  ('ready', 'Tayyar'),
-  ('due', 'Baqaya'),
+  ('ready', 'Ready'),
+  ('due', 'Payment due'),
   ('done', 'Delivered'),
-  ('all', 'Sab'),
+  ('all', 'All'),
 ];
 
 class OrdersTab extends StatelessWidget {
@@ -49,39 +51,46 @@ class OrdersTab extends StatelessWidget {
       list.sort((a, b) => (a.delivery.isEmpty ? '9' : a.delivery).compareTo(b.delivery.isEmpty ? '9' : b.delivery));
     }
     final total = list.fold<num>(0, (s, o) => s + o.due);
-    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Orders')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const OrderFormScreen())),
         icon: const Icon(Icons.add),
-        label: const Text('Naya order'),
+        label: const Text('New order'),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+        padding: const EdgeInsets.fromLTRB(0, 4, 0, 100),
         children: [
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final f in _filters)
-              ChoiceChip(label: Text(f.$2), selected: filter == f.$1, onSelected: (_) => onFilter(f.$1)),
-          ]),
-          const SizedBox(height: 12),
-          if (list.isEmpty)
-            const EmptyNote('Is list mein koi order nahi.')
-          else ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 8),
-              child: Text('${list.length} order${list.length > 1 ? 's' : ''}${total > 0 ? ' · baqaya ${rs(total)}' : ''}',
-                  style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
+          SizedBox(
+            height: 40,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              scrollDirection: Axis.horizontal,
+              itemCount: _filters.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final f = _filters[i];
+                return ChoiceChip(label: Text(f.$2), selected: filter == f.$1, onSelected: (_) => onFilter(f.$1));
+              },
             ),
-            ListCard(children: [
-              for (final o in list)
-                OrderTile(
-                  order: o,
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderFormScreen(orderId: o.id))),
-                ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              SectionTitle('${list.length} order${list.length == 1 ? '' : 's'}', trailing: total > 0 ? 'Due ${rs(total)}' : null),
+              if (list.isEmpty)
+                const EmptyNote('No orders in this list.', icon: Icons.receipt_long_outlined)
+              else
+                ListCard(children: [
+                  for (final o in list)
+                    OrderTile(
+                      order: o,
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderFormScreen(orderId: o.id))),
+                    ),
+                ]),
             ]),
-          ],
+          ),
         ],
       ),
     );
@@ -89,6 +98,7 @@ class OrdersTab extends StatelessWidget {
 }
 
 // ======================= ORDER FORM =======================
+/// WhatsApp message to the customer (kept in Roman Urdu for customers).
 String readyMessage(Order o, Customer c) {
   final b = StringBuffer('Assalam o Alaikum ${c.name} sahib,\n');
   b.write('Aap ke ${o.suits} suit tayyar hain');
@@ -169,12 +179,12 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
   Future<void> _save() async {
     if (store.customerById(customerId) == null) {
-      toast(context, 'Pehle customer chunein');
+      toast(context, 'Please choose a customer first');
       return;
     }
     await store.putOrder(_build());
     if (!mounted) return;
-    toast(context, 'Order save ho gaya');
+    toast(context, 'Order saved');
     Navigator.pop(context);
   }
 
@@ -185,7 +195,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     await store.putOrder(_build());
     if (!mounted) return;
     setState(() => existing = store.orderById(existing!.id));
-    toast(context, '${statusLabel[next]} ho gaya');
+    toast(context, 'Marked as ${statusLabel[next]}');
   }
 
   Future<void> _fullPaid() async {
@@ -193,15 +203,15 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     await store.putOrder(_build());
     if (!mounted) return;
     setState(() => existing = store.orderById(existing!.id));
-    toast(context, 'Payment poori');
+    toast(context, 'Marked as fully paid');
   }
 
   Future<void> _delete() async {
-    final ok = await confirmDelete(context, 'Order delete karein?', 'Ye order hamesha ke liye mit jayega.');
+    final ok = await confirmDelete(context, 'Delete order?', 'This order will be removed permanently.');
     if (!ok) return;
     await store.deleteOrder(existing!.id);
     if (!mounted) return;
-    toast(context, 'Order delete ho gaya');
+    toast(context, 'Order deleted');
     Navigator.pop(context);
   }
 
@@ -227,39 +237,24 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     if (id != null) setState(() => customerId = id);
   }
 
-  Widget _section(String title, List<Widget> children) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text(title.toUpperCase(),
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: .8, color: Theme.of(context).colorScheme.primary)),
-          const SizedBox(height: 12),
-          ...children,
-        ]),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final label = TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant);
     final c = store.customerById(customerId);
     final o = existing;
     final remaining = (_price - _advance) < 0 ? 0 : _price - _advance;
+    final label = GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700, color: muted(context));
 
     if (store.customers.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Naya order')),
+        appBar: AppBar(title: const Text('New order')),
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: EmptyNote(
-            'Order se pehle customer ka naap save karein.',
+            'Save a customer\'s measurements before creating an order.',
+            icon: Icons.straighten,
             action: FilledButton(
               onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const CustomerFormScreen())),
-              child: const Text('Naya customer'),
+              child: const Text('New customer'),
             ),
           ),
         ),
@@ -267,40 +262,56 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(o == null ? 'Naya order' : 'Order')),
+      appBar: AppBar(title: Text(o == null ? 'New order' : 'Order')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
         children: [
-          if (o != null && c != null) ...[
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              if (o.status != 'done')
-                FilledButton.icon(
-                  style: o.status == 'ready'
-                      ? FilledButton.styleFrom(backgroundColor: statusColors(context, 'ready').$2)
-                      : null,
-                  onPressed: _advanceStatus,
-                  icon: Icon(o.status == 'ready' ? Icons.check_circle : Icons.arrow_forward),
-                  label: Text(o.status == 'ready'
-                      ? 'Customer le gaya'
-                      : 'Agla qadam: ${statusLabel[statusKeys[statusKeys.indexOf(o.status) + 1]]}'),
-                ),
-              if (c.phone.isNotEmpty)
-                OutlinedButton.icon(
-                  onPressed: () => openWhatsApp(context, c.phone, readyMessage(_build(), c)),
-                  icon: const Icon(Icons.chat, size: 18),
-                  label: const Text('WhatsApp: suit tayyar'),
-                ),
-            ]),
-            const SizedBox(height: 14),
+          if (o != null) ...[
+            _StatusTrack(status: o.status),
+            const SizedBox(height: 12),
+            if (o.status != 'done')
+              FilledButton.icon(
+                style: o.status == 'ready'
+                    ? FilledButton.styleFrom(backgroundColor: statusColors(context, 'ready').$2, foregroundColor: Colors.white)
+                    : null,
+                onPressed: _advanceStatus,
+                icon: Icon(o.status == 'ready' ? Icons.handshake_outlined : Icons.arrow_forward_rounded),
+                label: Text(o.status == 'ready'
+                    ? 'Customer collected it'
+                    : 'Move to ${statusLabel[statusKeys[statusKeys.indexOf(o.status) + 1]]}'),
+              ),
+            if (c != null && c.phone.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => openWhatsApp(context, c.phone, readyMessage(_build(), c)),
+                icon: const Icon(Icons.chat_outlined, size: 18),
+                label: const Text('WhatsApp: suit is ready'),
+              ),
+            ],
+            const SizedBox(height: 16),
           ],
-          _section('Customer', [
+          FormSection(title: 'Customer', children: [
             InkWell(
               onTap: _pickCustomer,
-              borderRadius: BorderRadius.circular(10),
-              child: InputDecorator(
-                decoration: const InputDecoration(labelText: 'Customer', suffixIcon: Icon(Icons.arrow_drop_down)),
-                child: Text(c == null ? '— chunein —' : '#${c.serial} · ${c.name}${c.phone.isNotEmpty ? ' · ${c.phone}' : ''}',
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(border: Border.all(color: line(context)), borderRadius: BorderRadius.circular(14)),
+                child: Row(children: [
+                  c == null
+                      ? Icon(Icons.person_search_outlined, color: muted(context))
+                      : Initials(c.name, size: 38),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: c == null
+                        ? Text('Choose customer', style: GoogleFonts.manrope(fontWeight: FontWeight.w700, color: muted(context)))
+                        : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.manrope(fontWeight: FontWeight.w800, fontSize: 15)),
+                            Text('#${c.serial}${c.phone.isNotEmpty ? ' · ${c.phone}' : ''}', style: GoogleFonts.manrope(fontSize: 13, color: muted(context))),
+                          ]),
+                  ),
+                  Icon(Icons.unfold_more, color: muted(context)),
+                ]),
               ),
             ),
             if (c != null)
@@ -309,85 +320,87 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                 child: TextButton.icon(
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerScreen(customerId: c.id))),
                   icon: const Icon(Icons.straighten, size: 18),
-                  label: const Text('Naap dekhein'),
+                  label: const Text('View measurements'),
                 ),
               ),
           ]),
-          _section('Kaam', [
+          FormSection(title: 'Work', children: [
             Row(children: [
               SizedBox(
-                width: 100,
-                child: TextField(controller: suits, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Suits')),
+                width: 96,
+                child: TextField(controller: suits, keyboardType: TextInputType.number, style: mono(size: 16), decoration: const InputDecoration(labelText: 'Suits')),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: InkWell(
                   onTap: _pickDate,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(14),
                   child: InputDecorator(
-                    decoration: const InputDecoration(labelText: 'Delivery date', suffixIcon: Icon(Icons.event)),
-                    child: Text(delivery.isEmpty ? '—' : '${fmtDate(delivery)} ${parseIso(delivery)?.year ?? ''}'),
+                    decoration: const InputDecoration(labelText: 'Delivery date', suffixIcon: Icon(Icons.event_outlined)),
+                    child: Text(delivery.isEmpty ? '—' : '${fmtDate(delivery)} ${parseIso(delivery)?.year ?? ''}',
+                        style: GoogleFonts.manrope(fontWeight: FontWeight.w700)),
                   ),
                 ),
               ),
             ]),
-            const SizedBox(height: 14),
-            Text('Kapra / kism', style: label),
-            const SizedBox(height: 6),
+            const SizedBox(height: 16),
+            Text('Garment', style: label),
+            const SizedBox(height: 8),
             ChoiceRow(options: orderTypes, value: type, onChanged: (v) => setState(() => type = v)),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Text('Status', style: label),
-            const SizedBox(height: 6),
-            Wrap(spacing: 6, runSpacing: 6, children: [
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
               for (final s in statusKeys)
                 ChoiceChip(label: Text(statusLabel[s]!), selected: status == s, onSelected: (_) => setState(() => status = s)),
             ]),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             TextField(
               controller: notes,
               minLines: 2,
               maxLines: 5,
-              decoration: const InputDecoration(labelText: 'Is order ki tafseel', hintText: 'maslan: kapra customer ka, 2 jori butt…'),
+              decoration: const InputDecoration(labelText: 'Order notes', hintText: 'e.g. customer\'s own fabric, extra buttons…'),
             ),
           ]),
-          _section('Paisay', [
+          FormSection(title: 'Payment', children: [
             Row(children: [
               Expanded(
-                child: TextField(controller: price, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Kul silai (Rs)')),
+                child: TextField(controller: price, keyboardType: TextInputType.number, style: mono(size: 16), decoration: const InputDecoration(labelText: 'Total (Rs)')),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
-                child: TextField(controller: advance, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Advance / mila (Rs)')),
+                child: TextField(controller: advance, keyboardType: TextInputType.number, style: mono(size: 16), decoration: const InputDecoration(labelText: 'Paid (Rs)')),
               ),
             ]),
             const SizedBox(height: 12),
             Row(children: [
-              _money(context, rs(_price), 'Kul'),
+              _money(context, rs(_price), 'Total'),
               const SizedBox(width: 8),
-              _money(context, rs(_advance), 'Mila'),
+              _money(context, rs(_advance), 'Paid'),
               const SizedBox(width: 8),
-              _money(context, rs(remaining), 'Baqaya',
-                  color: remaining > 0 ? statusColors(context, 'late').$2 : statusColors(context, 'ready').$2),
+              _money(context, rs(remaining), 'Due', color: remaining > 0 ? statusColors(context, 'late').$2 : statusColors(context, 'ready').$2),
             ]),
             if (o != null && o.due > 0) ...[
               const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _fullPaid,
-                  icon: const Icon(Icons.payments_outlined, size: 18),
-                  label: const Text('Poori payment mil gayi'),
-                ),
+              OutlinedButton.icon(
+                onPressed: _fullPaid,
+                icon: const Icon(Icons.payments_outlined, size: 18),
+                label: const Text('Mark fully paid'),
               ),
             ],
           ]),
-          FilledButton(onPressed: _save, child: Text(o == null ? 'Order save karein' : 'Save karein')),
+          FilledButton.icon(
+            onPressed: _save,
+            icon: const Icon(Icons.check_rounded),
+            label: Text(o == null ? 'Save order' : 'Save changes'),
+          ),
           if (o != null) ...[
             const SizedBox(height: 10),
-            OutlinedButton(
-              style: OutlinedButton.styleFrom(foregroundColor: statusColors(context, 'late').$2),
+            TextButton.icon(
+              style: TextButton.styleFrom(foregroundColor: statusColors(context, 'late').$2),
               onPressed: _delete,
-              child: const Text('Order delete karein'),
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Delete order'),
             ),
           ],
         ],
@@ -396,17 +409,55 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   }
 
   Widget _money(BuildContext context, String v, String l, {Color? color}) {
-    final cs = Theme.of(context).colorScheme;
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
         child: Column(children: [
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(v, style: TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, fontSize: 16, color: color)),
-          ),
-          Text(l, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+          FittedBox(fit: BoxFit.scaleDown, child: Text(v, style: mono(size: 15, color: color))),
+          const SizedBox(height: 2),
+          Text(l, style: GoogleFonts.manrope(fontSize: 12, color: muted(context), fontWeight: FontWeight.w600)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Progress through New → Cutting → Stitching → Ready → Delivered.
+class _StatusTrack extends StatelessWidget {
+  final String status;
+  const _StatusTrack({required this.status});
+  @override
+  Widget build(BuildContext context) {
+    final idx = statusKeys.indexOf(status);
+    final on = wine(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+        child: Row(children: [
+          for (var i = 0; i < statusKeys.length; i++) ...[
+            Expanded(
+              child: Column(children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: i <= idx ? on : Colors.transparent,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: i <= idx ? on : line(context), width: 2),
+                  ),
+                  child: Icon(statusIcon(statusKeys[i]), size: 15, color: i <= idx ? Theme.of(context).colorScheme.onPrimary : muted(context)),
+                ),
+                const SizedBox(height: 6),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(statusLabel[statusKeys[i]]!,
+                      style: GoogleFonts.manrope(
+                          fontSize: 11, fontWeight: i == idx ? FontWeight.w800 : FontWeight.w600, color: i <= idx ? on : muted(context))),
+                ),
+              ]),
+            ),
+          ],
         ]),
       ),
     );
@@ -437,7 +488,7 @@ class _CustomerPickerState extends State<_CustomerPicker> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: TextField(
               autofocus: true,
-              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Naam, phone ya serial'),
+              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search name, phone or serial'),
               onChanged: (v) => setState(() => q = v),
             ),
           ),
@@ -447,9 +498,9 @@ class _CustomerPickerState extends State<_CustomerPicker> {
               itemBuilder: (_, i) {
                 final c = list[i];
                 return ListTile(
-                  leading: SerialBadge(c.serial),
+                  leading: Initials(c.name, size: 38),
                   title: Text(c.name),
-                  subtitle: c.phone.isEmpty ? null : Text(c.phone),
+                  subtitle: Text('#${c.serial}${c.phone.isEmpty ? '' : ' · ${c.phone}'}'),
                   onTap: () => Navigator.pop(context, c.id),
                 );
               },

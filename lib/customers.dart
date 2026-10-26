@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'models.dart';
 import 'orders.dart';
 import 'store.dart';
+import 'theme.dart';
 import 'widgets.dart';
 
 // ======================= CUSTOMERS LIST =======================
@@ -33,28 +35,34 @@ class _CustomersTabState extends State<CustomersTab> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerFormScreen())),
         icon: const Icon(Icons.person_add_alt_1),
-        label: const Text('Naya'),
+        label: const Text('New customer'),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
         children: [
           TextField(
-            decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Naam, phone ya serial number'),
+            decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search name, phone or serial no.'),
             onChanged: (v) => setState(() => q = v),
           ),
-          const SizedBox(height: 12),
+          SectionTitle(query.isEmpty ? 'All customers' : 'Results', trailing: '${list.length}'),
           if (list.isEmpty)
-            EmptyNote(store.customers.isEmpty
-                ? 'Abhi koi customer nahi.\nPehle customer ka naap likhne ke liye "Naya" dabayein.'
-                : 'Is naam ya number ka koi customer nahi mila.')
+            EmptyNote(
+              store.customers.isEmpty
+                  ? 'No customers yet.\nTap "New customer" to record the first measurements.'
+                  : 'No customer matches that name or number.',
+              icon: Icons.person_search_outlined,
+            )
           else
             ListCard(children: [
               for (final c in list)
                 ListTile(
-                  leading: SerialBadge(c.serial),
-                  title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text(c.phone.isEmpty ? 'phone nahi' : c.phone),
-                  trailing: _openCount(c.id) > 0 ? Pill('${_openCount(c.id)} order', 'silai') : null,
+                  leading: Initials(c.name),
+                  title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(c.phone.isEmpty ? 'No phone' : c.phone),
+                  trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text('#${c.serial}', style: mono(size: 13, color: muted(context))),
+                    if (_openCount(c.id) > 0) ...[const SizedBox(height: 4), Pill('${_openCount(c.id)} open', 'silai')],
+                  ]),
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerScreen(customerId: c.id))),
                 ),
             ]),
@@ -66,16 +74,17 @@ class _CustomersTabState extends State<CustomersTab> {
   int _openCount(String id) => store.orders.where((o) => o.customerId == id && o.status != 'done').length;
 }
 
-// ======================= CUSTOMER DETAIL (register slip) =======================
+// ======================= CUSTOMER DETAIL =======================
+/// Measurement slip as text (Urdu labels), for copy / WhatsApp.
 String slipText(Customer c) {
   final lines = <String>[];
   if (store.shopName.isNotEmpty) lines.add(store.shopName);
-  lines.add('Naap — ${c.name} (Serial ${c.serial})');
+  lines.add('ناپ — ${c.name} (سیریل ${c.serial})');
   for (final f in [...measFields, ...boxFields]) {
     final v = c.m[f.k];
-    if (v != null && v.isNotEmpty) lines.add('${f.en}: $v');
+    if (v != null && v.isNotEmpty) lines.add('${f.ur}: ${legacyUrdu[v] ?? v}');
   }
-  if (c.notes.isNotEmpty) lines.add('Tafseel: ${c.notes}');
+  if (c.notes.isNotEmpty) lines.add('اضافی تفصیل: ${c.notes}');
   return lines.join('\n');
 }
 
@@ -90,48 +99,77 @@ class CustomerScreen extends StatelessWidget {
       builder: (context, _) {
         final c = store.customerById(customerId);
         if (c == null) {
-          return Scaffold(appBar: AppBar(), body: const Center(child: Text('Customer nahi mila')));
+          return Scaffold(appBar: AppBar(), body: const Center(child: Text('Customer not found')));
         }
         final orders = store.orders.where((o) => o.customerId == c.id).toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        final cs = Theme.of(context).colorScheme;
+        final paid = orders.fold<num>(0, (s, o) => s + o.advance);
+        final due = orders.fold<num>(0, (s, o) => s + o.due);
         return Scaffold(
           appBar: AppBar(
-            title: Text(c.name, overflow: TextOverflow.ellipsis),
+            title: const Text('Customer'),
             actions: [
               IconButton(
-                tooltip: 'Naap badlein',
-                icon: const Icon(Icons.edit),
+                tooltip: 'Edit measurements',
+                icon: const Icon(Icons.edit_outlined),
                 onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerFormScreen(customerId: c.id))),
               ),
             ],
           ),
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
             children: [
-              RegisterSlip(customer: c),
-              const SizedBox(height: 12),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                FilledButton.icon(
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderFormScreen(customerId: c.id))),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Naya order'),
+              Row(children: [
+                Initials(c.name, size: 56),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(c.name, style: GoogleFonts.manrope(fontSize: 22, fontWeight: FontWeight.w800, height: 1.2)),
+                    const SizedBox(height: 2),
+                    Text([if (c.phone.isNotEmpty) c.phone, if (c.address.isNotEmpty) c.address].join(' · ').ifEmpty('No phone'),
+                        style: GoogleFonts.manrope(fontSize: 14, color: muted(context), fontWeight: FontWeight.w500)),
+                  ]),
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => copyText(context, slipText(c)),
-                  icon: const Icon(Icons.copy, size: 18),
-                  label: const Text('Naap copy'),
-                ),
-                if (c.phone.isNotEmpty)
-                  OutlinedButton.icon(
-                    onPressed: () => openWhatsApp(context, c.phone, slipText(c)),
-                    icon: const Icon(Icons.chat, size: 18),
-                    label: const Text('WhatsApp par naap'),
-                  ),
               ]),
-              SectionTitle('Orders', trailing: '${orders.length}'),
+              const SizedBox(height: 16),
+              Row(children: [
+                Expanded(child: _MiniStat('${orders.length}', 'Orders')),
+                const SizedBox(width: 8),
+                Expanded(child: _MiniStat(rs(paid), 'Paid')),
+                const SizedBox(width: 8),
+                Expanded(child: _MiniStat(rs(due), 'Due', alert: due > 0)),
+              ]),
+              const SizedBox(height: 16),
+              RegisterSlip(customer: c),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderFormScreen(customerId: c.id))),
+                icon: const Icon(Icons.add_circle_outline, size: 20),
+                label: const Text('New order'),
+              ),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => copyText(context, slipText(c)),
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    label: const Text('Copy'),
+                  ),
+                ),
+                if (c.phone.isNotEmpty) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => openWhatsApp(context, c.phone, slipText(c)),
+                      icon: const Icon(Icons.chat_outlined, size: 18),
+                      label: const Text('WhatsApp'),
+                    ),
+                  ),
+                ],
+              ]),
+              SectionTitle('Order history', trailing: '${orders.length}'),
               if (orders.isEmpty)
-                const EmptyNote('Is customer ka abhi koi order nahi.')
+                const EmptyNote('No orders for this customer yet.', icon: Icons.receipt_long_outlined)
               else
                 ListCard(children: [
                   for (final o in orders)
@@ -140,9 +178,9 @@ class CustomerScreen extends StatelessWidget {
                       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderFormScreen(orderId: o.id))),
                     ),
                 ]),
-              const SizedBox(height: 12),
-              Text('Customer bana: ${fmtMillis(c.createdAt)} · Naap update: ${fmtMillis(c.updatedAt)}',
-                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+              const SizedBox(height: 14),
+              Text('Added ${fmtMillis(c.createdAt)} · Measurements updated ${fmtMillis(c.updatedAt)}',
+                  textAlign: TextAlign.center, style: GoogleFonts.manrope(fontSize: 12, color: muted(context))),
             ],
           ),
         );
@@ -151,116 +189,144 @@ class CustomerScreen extends StatelessWidget {
   }
 }
 
-/// Measurement card styled like the red-bordered register page.
+extension on String {
+  String ifEmpty(String other) => isEmpty ? other : this;
+}
+
+class _MiniStat extends StatelessWidget {
+  final String value;
+  final String label;
+  final bool alert;
+  const _MiniStat(this.value, this.label, {this.alert = false});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+      decoration: BoxDecoration(color: surface(context), borderRadius: BorderRadius.circular(14), border: Border.all(color: line(context))),
+      child: Column(children: [
+        FittedBox(fit: BoxFit.scaleDown, child: Text(value, style: mono(size: 15, color: alert ? statusColors(context, 'late').$2 : null))),
+        const SizedBox(height: 2),
+        Text(label, style: GoogleFonts.manrope(fontSize: 12, color: muted(context), fontWeight: FontWeight.w600)),
+      ]),
+    );
+  }
+}
+
+/// Measurement card styled like the red-bordered register page, labels in Urdu.
 class RegisterSlip extends StatelessWidget {
   final Customer customer;
   const RegisterSlip({super.key, required this.customer});
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final red = cs.primary;
     final c = customer;
+    final red = wine(context);
+    final ink = Theme.of(context).colorScheme.onSurface;
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
+        color: surface(context),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: red, width: 2),
-        borderRadius: BorderRadius.circular(6),
+        boxShadow: [BoxShadow(color: AppColors.wine.withValues(alpha: isDark(context) ? 0 : .08), blurRadius: 18, offset: const Offset(0, 6))],
       ),
-      padding: const EdgeInsets.all(14),
+      clipBehavior: Clip.antiAlias,
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(c.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-              if (c.phone.isNotEmpty || c.address.isNotEmpty)
-                Text([c.phone, c.address].where((s) => s.isNotEmpty).join(' · '),
-                    style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
-            ]),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(border: Border.all(color: red), borderRadius: BorderRadius.circular(4)),
-            child: Text('Serial ${c.serial}', style: TextStyle(color: red, fontWeight: FontWeight.w700, fontFamily: 'monospace', fontSize: 13)),
-          ),
-        ]),
-        const Divider(height: 20),
-        LayoutBuilder(builder: (context, box) {
-          final cols = box.maxWidth > 480 ? 3 : 2;
-          final w = (box.maxWidth - (cols - 1) * 16) / cols;
-          return Wrap(spacing: 16, children: [
-            for (final f in measFields) SizedBox(width: w, child: _MeasLine(f: f, value: c.m[f.k] ?? '')),
-          ]);
-        }),
-        const SizedBox(height: 12),
-        LayoutBuilder(builder: (context, box) {
-          final w = (box.maxWidth - 2 * 8) / 3;
-          return Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final f in boxFields)
-              Container(
-                width: w,
-                clipBehavior: Clip.antiAlias,
-                decoration: BoxDecoration(border: Border.all(color: cs.outlineVariant), borderRadius: BorderRadius.circular(6)),
-                child: Column(children: [
+        Container(
+          color: red,
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+          child: Row(textDirection: TextDirection.rtl, children: [
+            Text('ناپ', textDirection: TextDirection.rtl, style: urdu(size: 18, weight: FontWeight.w700, color: Theme.of(context).colorScheme.onPrimary, height: 1.7)),
+            const Spacer(),
+            Text('Serial #${c.serial}', style: mono(size: 13, color: Theme.of(context).colorScheme.onPrimary)),
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            LayoutBuilder(builder: (context, box) {
+              final cols = box.maxWidth > 480 ? 3 : 2;
+              final w = (box.maxWidth - (cols - 1) * 18) / cols;
+              return Wrap(
+                spacing: 18,
+                textDirection: TextDirection.rtl,
+                children: [
+                  for (final f in measFields) SizedBox(width: w, child: _slipLine(context, f, _show(c.m[f.k]), ink)),
+                ],
+              );
+            }),
+            const SizedBox(height: 14),
+            LayoutBuilder(builder: (context, box) {
+              final w = (box.maxWidth - 2 * 8) / 3;
+              return Wrap(spacing: 8, runSpacing: 8, textDirection: TextDirection.rtl, children: [
+                for (final f in boxFields)
                   Container(
-                    width: double.infinity,
-                    color: red,
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Text(f.ur, textAlign: TextAlign.center, textDirection: TextDirection.rtl,
-                        style: TextStyle(color: cs.onPrimary, fontWeight: FontWeight.w700, fontSize: 13)),
+                    width: w,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(border: Border.all(color: line(context)), borderRadius: BorderRadius.circular(10)),
+                    child: Column(children: [
+                      Container(
+                        width: double.infinity,
+                        color: isDark(context) ? AppColors.wine.withValues(alpha: .4) : AppColors.goldSoft,
+                        child: Text(f.ur, textAlign: TextAlign.center, textDirection: TextDirection.rtl,
+                            style: urdu(size: 13.5, color: isDark(context) ? AppColors.goldSoft : AppColors.wineDeep, height: 1.6)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            _show(c.m[f.k]).isEmpty ? '–' : _show(c.m[f.k]),
+                            style: _hasUrdu(_show(c.m[f.k])) ? urdu(size: 14, color: ink, height: 1.5) : mono(size: 17, color: ink),
+                          ),
+                        ),
+                      ),
+                    ]),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Text((c.m[f.k] ?? '').isEmpty ? '–' : c.m[f.k]!,
-                        style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, fontSize: 17)),
-                  ),
+              ]);
+            }),
+            if (c.notes.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text('اضافی تفصیل', textDirection: TextDirection.rtl, style: urdu(size: 13, color: muted(context), height: 1.7)),
+                  Text(c.notes,
+                      textDirection: _hasUrdu(c.notes) ? TextDirection.rtl : TextDirection.ltr,
+                      textAlign: _hasUrdu(c.notes) ? TextAlign.right : TextAlign.left,
+                      style: _hasUrdu(c.notes) ? urdu(size: 15, color: ink) : GoogleFonts.manrope(fontSize: 14, color: ink, height: 1.4)),
                 ]),
               ),
-          ]);
-        }),
-        if (c.notes.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('IZAFI TAFSEEL', style: TextStyle(fontSize: 11, letterSpacing: .6, color: cs.onSurfaceVariant, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(c.notes),
-            ]),
-          ),
-        ],
+            ],
+          ]),
+        ),
       ]),
     );
   }
 }
 
-class _MeasLine extends StatelessWidget {
-  final MeasField f;
-  final String value;
-  const _MeasLine({required this.f, required this.value});
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: cs.outlineVariant, style: BorderStyle.solid))),
-      child: Row(children: [
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(f.ur, textDirection: TextDirection.rtl, style: const TextStyle(fontSize: 15)),
-            Text(f.en.toUpperCase(), style: TextStyle(fontSize: 10, letterSpacing: .5, color: cs.onSurfaceVariant)),
-          ]),
+bool _hasUrdu(String? s) => s != null && RegExp(r'[؀-ۿ]').hasMatch(s);
+
+/// Value as shown on the slip (old Roman entries become Urdu).
+String _show(String? v) => (v == null || v.isEmpty) ? '' : (legacyUrdu[v] ?? v);
+
+Widget _slipLine(BuildContext context, MeasField f, String v, Color ink) {
+  return Container(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    decoration: BoxDecoration(border: Border(bottom: BorderSide(color: line(context)))),
+    child: Row(textDirection: TextDirection.rtl, children: [
+      Text(f.ur, textDirection: TextDirection.rtl, style: urdu(size: 16, color: muted(context))),
+      const Spacer(),
+      Flexible(
+        child: Text(
+          v.isEmpty ? '—' : v,
+          textDirection: _hasUrdu(v) ? TextDirection.rtl : TextDirection.ltr,
+          overflow: TextOverflow.ellipsis,
+          style: _hasUrdu(v) ? urdu(size: 15, color: ink) : mono(size: 17, color: v.isEmpty ? line(context) : ink),
         ),
-        Text(value.isEmpty ? '—' : value,
-            style: TextStyle(
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w700,
-                fontSize: 17,
-                color: value.isEmpty ? cs.outlineVariant : cs.onSurface)),
-      ]),
-    );
-  }
+      ),
+    ]),
+  );
 }
 
 // ======================= CUSTOMER FORM =======================
@@ -298,8 +364,8 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     address.text = c?.address ?? '';
     notes.text = c?.notes ?? '';
     pockets.text = c?.m['pockets'] ?? '';
-    ghera = c?.m['ghera'] ?? '';
-    collar = c?.m['collar'] ?? '';
+    ghera = legacyUrdu[c?.m['ghera']] ?? c?.m['ghera'] ?? '';
+    collar = legacyUrdu[c?.m['collar']] ?? c?.m['collar'] ?? '';
     for (final k in _numeric) {
       final ctl = TextEditingController(text: c?.m[k] ?? '');
       final fn = FocusNode();
@@ -344,12 +410,12 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   Future<void> _save() async {
     final n = name.text.trim();
     if (n.isEmpty) {
-      toast(context, 'Naam likhna zaroori hai');
+      toast(context, 'Please enter the customer name');
       return;
     }
     final s = int.tryParse(serial.text.trim()) ?? store.nextSerial();
     if (store.serialTaken(s, existing?.id ?? '')) {
-      toast(context, 'Serial $s pehle se kisi aur ka hai');
+      toast(context, 'Serial $s already belongs to another customer');
       return;
     }
     final m = <String, String>{};
@@ -374,7 +440,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     );
     await store.putCustomer(c);
     if (!mounted) return;
-    toast(context, 'Save ho gaya');
+    toast(context, 'Saved');
     if (existing != null) {
       Navigator.pop(context);
     } else {
@@ -385,76 +451,71 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   Future<void> _delete() async {
     final c = existing;
     if (c == null) return;
-    final ok = await confirmDelete(context, 'Customer delete karein?', '${c.name} aur iske saare orders mit jayenge.');
+    final ok = await confirmDelete(context, 'Delete customer?', '${c.name} and all of their orders will be deleted.');
     if (!ok) return;
     await store.deleteCustomer(c.id);
     if (!mounted) return;
-    toast(context, 'Delete ho gaya');
+    toast(context, 'Customer deleted');
     Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
+  /// One measurement box: Urdu label on top, big number input below.
   Widget _measField(MeasField f) {
-    return TextField(
-      controller: meas[f.k],
-      focusNode: focus[f.k],
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      textAlign: TextAlign.center,
-      style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, fontSize: 17),
-      decoration: InputDecoration(labelText: '${f.en}  ${f.ur}'),
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      UrduLabel(f.ur),
+      TextField(
+        controller: meas[f.k],
+        focusNode: focus[f.k],
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textAlign: TextAlign.center,
+        style: mono(size: 19),
+        decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(vertical: 12)),
+      ),
+    ]);
   }
 
   Widget _grid(List<Widget> items) {
     return LayoutBuilder(builder: (context, box) {
-      final cols = box.maxWidth > 480 ? 3 : 2;
-      final w = (box.maxWidth - (cols - 1) * 12) / cols;
-      return Wrap(spacing: 12, runSpacing: 12, children: [for (final i in items) SizedBox(width: w, child: i)]);
+      final cols = box.maxWidth > 480 ? 4 : 3;
+      final w = (box.maxWidth - (cols - 1) * 10) / cols;
+      return Wrap(
+        spacing: 10,
+        runSpacing: 6,
+        textDirection: TextDirection.rtl,
+        children: [for (final i in items) SizedBox(width: w, child: i)],
+      );
     });
-  }
-
-  Widget _section(String title, List<Widget> children) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text(title.toUpperCase(),
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: .8, color: Theme.of(context).colorScheme.primary)),
-          const SizedBox(height: 12),
-          ...children,
-        ]),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final label = TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.onSurfaceVariant);
     final mainMeas = measFields.where((f) => _numeric.contains(f.k)).toList();
     final boxMeas = boxFields.where((f) => _numeric.contains(f.k)).toList();
+    final ink = Theme.of(context).colorScheme.onSurface;
     return Scaffold(
-      appBar: AppBar(title: Text(existing == null ? 'Naya customer' : 'Naap badlein')),
+      appBar: AppBar(title: Text(existing == null ? 'New customer' : 'Edit customer')),
       body: Column(children: [
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
             children: [
-              _section('Customer', [
+              FormSection(title: 'Customer details', children: [
                 Row(children: [
                   SizedBox(
-                    width: 110,
+                    width: 104,
                     child: TextField(
                       controller: serial,
                       keyboardType: TextInputType.number,
+                      style: mono(size: 16),
                       decoration: const InputDecoration(labelText: 'Serial no.'),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
                       controller: phone,
                       keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(labelText: 'Phone', hintText: '03xx-xxxxxxx'),
+                      decoration: const InputDecoration(labelText: 'Phone', hintText: '03xx-xxxxxxx', prefixIcon: Icon(Icons.phone_outlined, size: 20)),
                     ),
                   ),
                 ]),
@@ -462,44 +523,60 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                 TextField(
                   controller: name,
                   textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(labelText: 'Naam  نام'),
+                  decoration: const InputDecoration(labelText: 'Name', prefixIcon: Icon(Icons.person_outline, size: 20)),
                 ),
                 const SizedBox(height: 12),
-                TextField(controller: address, decoration: const InputDecoration(labelText: 'Ilaqa / pata (optional)')),
-              ]),
-              _section('Naap (inch)', [
-                _grid([for (final f in mainMeas) _measField(f)]),
-                const SizedBox(height: 14),
-                Text('Ghera  گھیرا', style: label),
-                const SizedBox(height: 6),
-                ChoiceRow(options: gheraOptions, value: ghera, onChanged: (v) => setState(() => ghera = v)),
-                const SizedBox(height: 14),
                 TextField(
-                  controller: pockets,
-                  decoration: const InputDecoration(labelText: 'Pockets  پاکٹس', hintText: 'maslan: 2 side, 1 front'),
+                  controller: address,
+                  decoration: const InputDecoration(labelText: 'Area / address (optional)', prefixIcon: Icon(Icons.place_outlined, size: 20)),
                 ),
               ]),
-              _section('Design', [
+              FormSection(title: 'ناپ (انچ)', urduTitle: true, children: [
+                _grid([for (final f in mainMeas) _measField(f)]),
+                const SizedBox(height: 14),
+                const UrduLabel('گھیرا'),
+                const SizedBox(height: 4),
+                ChoiceRow(options: gheraOptions, value: ghera, urduLabels: true, onChanged: (v) => setState(() => ghera = v)),
+                const SizedBox(height: 14),
+                const UrduLabel('پاکٹس'),
+                TextField(
+                  controller: pockets,
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  style: urdu(size: 15, color: ink, height: 1.6),
+                  decoration: InputDecoration(hintText: 'مثلاً: 2 سائیڈ، 1 فرنٹ', hintStyle: urdu(size: 14, color: muted(context), height: 1.6)),
+                ),
+              ]),
+              FormSection(title: 'ڈیزائن', urduTitle: true, children: [
                 _grid([for (final f in boxMeas) _measField(f)]),
                 const SizedBox(height: 14),
-                Text('Collar / Bain  کالر/بین', style: label),
-                const SizedBox(height: 6),
-                ChoiceRow(options: collarOptions, value: collar, onChanged: (v) => setState(() => collar = v)),
+                const UrduLabel('کالر / بین'),
+                const SizedBox(height: 4),
+                ChoiceRow(options: collarOptions, value: collar, urduLabels: true, onChanged: (v) => setState(() => collar = v)),
                 const SizedBox(height: 14),
+                const UrduLabel('اضافی تفصیل'),
                 TextField(
                   controller: notes,
                   minLines: 3,
                   maxLines: 6,
-                  decoration: const InputDecoration(labelText: 'Izafi tafseel  اضافی تفصیل', hintText: 'maslan: saamne patti, sawa 2 chori bain'),
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  style: urdu(size: 15, color: ink, height: 1.8),
+                  decoration: InputDecoration(hintText: 'مثلاً: سامنے پٹی، سوا 2 چوڑی بین', hintStyle: urdu(size: 14, color: muted(context), height: 1.6)),
                 ),
               ]),
-              FilledButton(onPressed: _save, child: Text(existing == null ? 'Customer save karein' : 'Save karein')),
+              FilledButton.icon(
+                onPressed: _save,
+                icon: const Icon(Icons.check_rounded),
+                label: Text(existing == null ? 'Save customer' : 'Save changes'),
+              ),
               if (existing != null) ...[
                 const SizedBox(height: 10),
-                OutlinedButton(
-                  style: OutlinedButton.styleFrom(foregroundColor: statusColors(context, 'late').$2),
+                TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: statusColors(context, 'late').$2),
                   onPressed: _delete,
-                  child: const Text('Customer delete karein'),
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete customer'),
                 ),
               ],
             ],
@@ -517,23 +594,26 @@ class _FractionBar extends StatelessWidget {
   const _FractionBar({required this.onTap});
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return Material(
-      color: cs.inverseSurface,
+      color: AppColors.wineDeep,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text('Jorein:', style: TextStyle(color: cs.onInverseSurface, fontSize: 12)),
-          const SizedBox(width: 8),
           for (final f in ['¼', '½', '¾', '⌫'])
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 5),
               child: SizedBox(
-                width: 54,
-                child: FilledButton.tonal(
-                  style: FilledButton.styleFrom(padding: EdgeInsets.zero),
+                width: 62,
+                height: 44,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size(0, 44),
+                    backgroundColor: f == '⌫' ? Colors.white.withValues(alpha: .14) : AppColors.gold,
+                    foregroundColor: f == '⌫' ? Colors.white : AppColors.wineDeep,
+                  ),
                   onPressed: () => onTap(f),
-                  child: Text(f, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                  child: Text(f, style: mono(size: 21, weight: FontWeight.w800)),
                 ),
               ),
             ),

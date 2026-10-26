@@ -35,6 +35,10 @@ jobs:
       - name: App naam aur icon lagao
         run: |
           sed -i 's/android:label="darzi_register"/android:label="Darzi Register"/' android/app/src/main/AndroidManifest.xml
+          # Release builds need internet for Google Drive backup and fonts
+          grep -q "android.permission.INTERNET" android/app/src/main/AndroidManifest.xml || \
+            sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' android/app/src/main/AndroidManifest.xml
+          grep -n "INTERNET\|android:label" android/app/src/main/AndroidManifest.xml
           RES=android/app/src/main/res
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             cp launcher-$d.png $RES/mipmap-$d/ic_launcher.png

@@ -57,7 +57,7 @@ class DriveBackup {
   }
 
   Future<drive.DriveApi> _api() async {
-    if (!await signInSilently()) throw Exception('Google account juda hua nahi');
+    if (!await signInSilently()) throw Exception('Google account not connected');
     final h = await account!.authHeaders;
     return drive.DriveApi(_AuthClient(h));
   }
@@ -113,13 +113,16 @@ class DriveBackup {
 String friendlyDriveError(Object e) {
   final s = e.toString();
   if (s.contains('ApiException: 10') || s.contains('DEVELOPER_ERROR') || s.contains('sign_in_failed')) {
-    return 'Google se judna nahi hua. Google Cloud setup (README ka Qadam "Auto backup") poora karein.';
+    return 'Could not connect to Google. Check the package name and SHA-1 in Google Cloud.';
   }
   if (s.contains('network') || s.contains('SocketException') || s.contains('ApiException: 7')) {
-    return 'Internet nahi hai. Internet aane par backup khud ho jayega.';
+    return 'No internet. Backup will run when you are back online.';
   }
   if (s.contains('sign_in_canceled') || s.contains('ApiException: 12501')) {
-    return 'Google account nahi chuna gaya.';
+    return 'No Google account was chosen.';
   }
-  return 'Drive masla: $s';
+  if (s.contains('401') || s.contains('403') || s.contains('invalid_grant')) {
+    return 'Google permission expired. Disconnect and connect Google Drive again.';
+  }
+  return 'Drive problem: $s';
 }

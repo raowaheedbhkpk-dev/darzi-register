@@ -34,16 +34,25 @@ const List<MeasField> boxFields = [
   MeasField('plate', 'پلیٹ', 'Plate'),
 ];
 
-const List<String> gheraOptions = ['Gol', 'Seedha'];
-const List<String> collarOptions = ['Collar', 'Bain', 'Sherwani'];
+const List<String> gheraOptions = ['گول', 'سیدھا'];
+const List<String> collarOptions = ['کالر', 'بین', 'شیروانی'];
+
+/// Older entries were saved in Roman Urdu; show them in Urdu.
+const Map<String, String> legacyUrdu = {
+  'Gol': 'گول',
+  'Seedha': 'سیدھا',
+  'Collar': 'کالر',
+  'Bain': 'بین',
+  'Sherwani': 'شیروانی',
+};
 const List<String> orderTypes = ['Shalwar Qameez', 'Kurta', 'Waistcoat', 'Pant Shirt', 'Sherwani'];
 
 const List<String> statusKeys = ['new', 'cutting', 'silai', 'ready', 'done'];
 const Map<String, String> statusLabel = {
-  'new': 'Naya',
+  'new': 'New',
   'cutting': 'Cutting',
-  'silai': 'Silai',
-  'ready': 'Tayyar',
+  'silai': 'Stitching',
+  'ready': 'Ready',
   'done': 'Delivered',
 };
 
@@ -228,11 +237,12 @@ String rs(num n) {
 
 String agoText(int ms) {
   final m = (DateTime.now().millisecondsSinceEpoch - ms) ~/ 60000;
-  if (m < 1) return 'abhi';
-  if (m < 60) return '$m min';
+  if (m < 1) return 'just now';
+  if (m < 60) return '$m min ago';
   final h = (m / 60).round();
-  if (h < 24) return '$h ghante';
-  return '${(h / 24).round()} din';
+  if (h < 24) return '$h h ago';
+  final d = (h / 24).round();
+  return d == 1 ? '1 day ago' : '$d days ago';
 }
 
 /// 0300-1234567 -> 923001234567 for wa.me links.
